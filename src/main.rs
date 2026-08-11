@@ -9,6 +9,7 @@
 
 mod heatmap;
 mod parser;
+mod parsers;
 mod render;
 mod stats;
 
@@ -17,7 +18,7 @@ use std::path::PathBuf;
 use chrono::{Local, NaiveDate};
 
 use crate::heatmap::render_heatmap;
-use crate::parser::{parse_dir, parse_stdin, Entry};
+use crate::parser::parse_stdin;
 use crate::render::{bar, blank, fmt_num, fmt_pct, fmt_short, pad, str_width, Term};
 use crate::stats::{compute, Agg, Stats};
 
@@ -74,68 +75,40 @@ fn main() {
     let t = Term::detect(no_color);
     let today = Local::now().date_naive();
 
-    // ---- 数据收集 ----
-    let (entries, file_count, source_desc): (Vec<Entry>, usize, String) = if stdin_mode {
+    // ---- 数据收集（多 Agent 源）----
+    let (entries, source_desc): (Vec<crate::parser::Entry>, String) = if stdin_mode {
         match parse_stdin() {
-            Ok(e) => (e, 0, "标准输入".to_string()),
+            Ok(e) => (e, "标准输入".to_string()),
             Err(err) => {
                 eprintln!("读取标准输入失败：{err}");
                 std::process::exit(1);
             }
         }
     } else {
-        if dirs.is_empty() {
-            dirs = default_search_dirs();
-        }
-        let mut entries = Vec::new();
-        let mut files = 0usize;
-        let mut existing: Vec<String> = Vec::new();
-        for d in &dirs {
-            if d.exists() {
-                let (e, n) = parse_dir(d);
-                entries.extend(e);
-                files += n;
-                existing.push(d.display().to_string());
-            } else {
-                eprintln!("警告：目录不存在，已跳过：{}", d.display());
-            }
-        }
-        if existing.is_empty() {
-            eprintln!("未找到任何会话目录。可通过 --dir 指定或设置 PI_AGENT_DIR 环境变量。");
+        let results = if dirs.is_empty() {
+            parsers::parse_all(None)
+        } else {
+            parsers::parse_all(Some(&dirs))
+        };
+        if results.is_empty() {
+            eprintln!("未找到任何 Agent 会话数据。可检查 ~/.pi/agent/sessions、~/.codex/sessions、~/.claude/projects、~/.local/share/opencode/opencode.db 等，或用 --dir 指定。");
             std::process::exit(1);
         }
-        let desc = if existing.len() == 1 { existing[0].clone() } else { format!("{} 个目录", existing.len()) };
-        (entries, files, desc)
+        let mut entries = Vec::new();
+        let mut names: Vec<String> = Vec::new();
+        for (name, es) in results {
+            names.push(name);
+            entries.extend(es);
+        }
+        (entries, names.join(" · "))
     };
 
     // ---- 统计与渲染 ----
-    let stats = compute(&entries, file_count, days);
+    let stats = compute(&entries, days);
     let lines = build_page(&t, &stats, days, today, &source_desc);
     for l in lines {
         println!("{l}");
     }
-}
-
-/// 默认搜索目录：PI_AGENT_DIR 环境变量（逗号分隔）→ ~/.pi/agent/sessions
-fn default_search_dirs() -> Vec<PathBuf> {
-    if let Ok(env) = std::env::var("PI_AGENT_DIR") {
-        let dirs: Vec<PathBuf> = env
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .map(PathBuf::from)
-            .collect();
-        if !dirs.is_empty() {
-            return dirs;
-        }
-    }
-    if let Some(home) = std::env::var_os("HOME") {
-        let p = PathBuf::from(home).join(".pi/agent/sessions");
-        if p.exists() {
-            return vec![p];
-        }
-    }
-    Vec::new()
 }
 
 fn print_help() {
@@ -174,15 +147,14 @@ fn build_page(t: &Term, s: &Stats, days: i64, today: NaiveDate, source: &str) ->
         blank(),
         format!("{} {}", t.bold("数据源"), t.dim(source)),
         format!(
-            "{} {} 个会话文件 · {} 条消息 · 更新于 {}",
+            "{} {} 条消息 · 更新于 {}",
             t.dim("统计"),
-            fmt_num(s.file_count as u64),
             fmt_num(s.entry_count as u64),
             t.dim(&now)
         ),
         blank(),
     ];
-    out.extend(render::panel(t, Some(" TokStat · pi-agent Token 统计 "), header_lines, panel_w));
+    out.extend(render::panel(t, Some(" TokStat · 全 Agent Token 统计 "), header_lines, panel_w));
 
     // ---- 卡片 ----
     let cards = build_cards(t, s);
@@ -390,7 +362,8 @@ fn build_models_panel(t: &Term, s: &Stats, panel_w: usize) -> Vec<String> {
     }
 
     let show = s.models.len().min(8);
-    let name_w = 26;
+    let src_w = 11;
+    let name_w = 22;
     let tok_w = 12;
     let pct_w = 9;
     let msg_w = 10;
@@ -398,6 +371,7 @@ fn build_models_panel(t: &Term, s: &Stats, panel_w: usize) -> Vec<String> {
 
     // 表头
     let mut header = format!("  {}", pad("#", 3));
+    header.push_str(&pad("来源", src_w));
     header.push_str(&pad("模型", name_w));
     header.push_str(&format!("{:>tok_w$}", "Token"));
     header.push_str(&format!("{:>pct_w$}", "占比"));
@@ -410,10 +384,11 @@ fn build_models_panel(t: &Term, s: &Stats, panel_w: usize) -> Vec<String> {
 
     for (idx, m) in s.models.iter().take(show).enumerate() {
         let rank = format!("{:>2}", idx + 1);
-        let name = truncate(&m.name, name_w);
+        let (src, name) = m.name.split_once('|').map(|(a, b)| (a.to_string(), b.to_string())).unwrap_or((String::new(), m.name.clone()));
         let pct = if total > 0 { format!("{:>7.1}%", m.tokens as f64 * 100.0 / total as f64) } else { "   n/a".to_string() };
         let mut line = format!("  {rank} ");
-        line.push_str(&pad(&name, name_w));
+        line.push_str(&pad(&t.dim(&truncate(&src, src_w)), src_w));
+        line.push_str(&pad(&truncate(&name, name_w), name_w));
         line.push_str(&format!("{:>tok_w$}", fmt_short(m.tokens)));
         line.push_str(&format!("{pct:>pct_w$}"));
         line.push_str(&format!("{:>msg_w$}", fmt_num(m.messages)));

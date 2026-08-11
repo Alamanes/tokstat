@@ -19,13 +19,15 @@
 use std::collections::HashSet;
 use std::fs;
 use std::io::{self, BufRead};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use chrono::{DateTime, Utc};
 
 /// 一条归一化后的用量记录（对应 Tokdash entry）。
 #[derive(Debug, Clone)]
 pub struct Entry {
+    /// 来源（pi_agent / codex / claude / opencode / ...）
+    pub source: String,
     pub ts_ms: i64,
     pub model: String,
     pub provider: String,
@@ -56,21 +58,6 @@ impl Entry {
 
 /// 扫描目录下所有 `*.jsonl` 会话日志并解析为条目列表。
 /// 去重集合跨文件共享（同一会话 resume 后消息会复制到新文件，不能重复计数）。
-pub fn parse_dir(dir: &Path) -> (Vec<Entry>, usize) {
-    let mut files: Vec<PathBuf> = Vec::new();
-    collect_jsonl(dir, &mut files);
-    files.sort();
-
-    let mut entries = Vec::new();
-    let mut seen: HashSet<(String, String)> = HashSet::new();
-    for f in &files {
-        entries.extend(parse_file(f, &mut seen));
-    }
-    let file_count = files.len();
-    (entries, file_count)
-}
-
-/// 从 stdin 逐行读取 JSONL 并解析。
 pub fn parse_stdin() -> io::Result<Vec<Entry>> {
     let stdin = io::stdin();
     let mut entries = Vec::new();
@@ -93,25 +80,7 @@ pub fn parse_stdin() -> io::Result<Vec<Entry>> {
     Ok(entries)
 }
 
-fn collect_jsonl(dir: &Path, out: &mut Vec<PathBuf>) {
-    let rd = match fs::read_dir(dir) {
-        Ok(rd) => rd,
-        Err(_) => return,
-    };
-    for item in rd.flatten() {
-        let p = item.path();
-        let ft = match item.file_type() {
-            Ok(t) => t,
-            Err(_) => continue,
-        };
-        if ft.is_dir() {
-            collect_jsonl(&p, out);
-        } else if ft.is_file() && p.extension().map(|e| e == "jsonl").unwrap_or(false) {
-            out.push(p);
-        }
-    }
-}
-
+#[allow(dead_code)]
 fn parse_file(path: &Path, seen: &mut HashSet<(String, String)>) -> Vec<Entry> {
     let content = match fs::read_to_string(path) {
         Ok(c) => c,
@@ -237,6 +206,7 @@ fn parse_line(
         .unwrap_or(0.0);
 
     entries.push(Entry {
+        source: "pi_agent".into(),
         ts_ms,
         model,
         provider,
@@ -266,6 +236,7 @@ mod tests {
     #[test]
     fn test_total_tokens_semantics() {
         let e = Entry {
+            source: "pi_agent".into(),
             ts_ms: 0,
             model: "m".into(),
             provider: String::new(),

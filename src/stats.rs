@@ -74,13 +74,11 @@ pub struct Stats {
     /// 每日总 token（日期 → token），按日升序
     pub daily: BTreeMap<NaiveDate, u64>,
     pub models: Vec<ModelStat>,
-    /// 参与统计的文件数（stdin 模式为 0）
-    pub file_count: usize,
     pub entry_count: usize,
 }
 
 /// 计算统计。`days` 用于「近 N 天」窗口与每日分布保留范围。
-pub fn compute(entries: &[Entry], file_count: usize, days: i64) -> Stats {
+pub fn compute(entries: &[Entry], days: i64) -> Stats {
     let today = Local::now().date_naive();
     let window_start = today - chrono::Days::new(days.max(1) as u64 - 1);
 
@@ -102,9 +100,8 @@ pub fn compute(entries: &[Entry], file_count: usize, days: i64) -> Stats {
             *daily.entry(date).or_insert(0) += e.total_tokens();
         }
 
-        let m = model_map
-            .entry(full_model_name(e))
-            .or_insert_with(|| ModelStat { name: full_model_name(e), tokens: 0, cost: 0.0, messages: 0 });
+        let key = model_key(e);
+        let m = model_map.entry(key.clone()).or_insert_with(|| ModelStat { name: key, tokens: 0, cost: 0.0, messages: 0 });
         m.tokens += e.total_tokens();
         m.cost += e.cost;
         m.messages += 1;
@@ -118,7 +115,6 @@ pub fn compute(entries: &[Entry], file_count: usize, days: i64) -> Stats {
         last30,
         daily,
         models,
-        file_count,
         entry_count: entries.len(),
     }
 }
@@ -142,6 +138,11 @@ fn full_model_name(e: &Entry) -> String {
     }
 }
 
+/// 分组 key：source + full_model_name（同 Tokdash 的 (source, full_model_name)）。
+fn model_key(e: &Entry) -> String {
+    format!("{}|{}", e.source, full_model_name(e))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,6 +150,7 @@ mod tests {
 
     fn entry(ts_ms: i64, input: u64, output: u64, cache_read: u64, cache_write: u64, model: &str) -> Entry {
         Entry {
+            source: "pi_agent".into(),
             ts_ms,
             model: model.into(),
             provider: String::new(),
@@ -184,7 +186,7 @@ mod tests {
         let old_ms = today_ms - 40 * 24 * 3600 * 1000; // 40 天前
 
         let entries = vec![entry(today_ms, 10, 0, 0, 0, "m"), entry(old_ms, 100, 0, 0, 0, "m")];
-        let s = compute(&entries, 1, 30);
+        let s = compute(&entries, 30);
         assert_eq!(s.all.messages, 2);
         assert_eq!(s.last30.messages, 1);
         assert_eq!(s.daily.len(), 1);

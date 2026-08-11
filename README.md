@@ -1,10 +1,27 @@
 # TokStat
 
-pi-agent 会话日志 Token 用量统计 CLI。解析 `~/.pi/agent/sessions` 下的 JSONL 会话日志，输出一张终端统计面板：**至今总 Token、近 30 天 Token、输入 / 输出 / 缓存命中 Token、缓存命中率、GitHub 风格每日热力图、模型排行**。
+全 Agent 会话 Token 用量统计 CLI。自动发现并解析本机所有编码 Agent 的用量日志（pi-agent、Codex、Claude Code、OpenCode、Gemini CLI、Kimi、Grok、Hermes、Mimocode、Copilot CLI），输出一张终端统计面板：**至今总 Token、近 30 天 Token、输入 / 输出 / 缓存命中 Token、缓存命中率、GitHub 风格每日热力图、模型排行**。
 
-统计口径与 [Tokdash](https://github.com/Shiorangerin/Tokdash) 的 pi-agent 解析器保持一致。
+统计口径与 [Tokdash](https://github.com/Shiorangerin/Tokdash) 的各解析器保持一致。
 
 ![示例](docs/screenshot.png)
+
+## 支持的 Agent 数据源
+
+| 源 | 数据位置 | 格式 |
+| --- | --- | --- |
+| pi_agent | `~/.pi/agent/sessions/**/*.jsonl` | JSONL（`PI_AGENT_DIR` 可覆盖） |
+| codex | `~/.codex/sessions/**/*.jsonl` | JSONL token_count 事件 |
+| claude | `~/.claude*/projects/**/*.jsonl` | JSONL streaming usage |
+| opencode | `~/.local/share/opencode/opencode.db` | SQLite |
+| gemini_cli | `~/.gemini/tmp/*/chats/session-*` | JSON / JSONL |
+| kimi | `~/.kimi` + `~/.kimi-code` | wire.jsonl（两种 schema） |
+| grok | `$GROK_HOME/logs/unified.jsonl` | JSONL |
+| hermes | `~/.hermes/state.db` | SQLite |
+| mimo | `~/.local/share/mimocode/mimocode.db` | SQLite |
+| copilot_cli | `~/.copilot/otel/*.jsonl` + `events.jsonl` | OTel JSONL |
+
+默认自动扫描所有存在的数据源并按源去重汇总；`--dir` 会按目录名自动路由到对应解析器。
 
 ## 功能
 
@@ -47,9 +64,9 @@ Windows：安装 Rust（[rustup.rs](https://rustup.rs)）后在项目目录执�
 ## 用法
 
 ```text
-tokstat                 扫描默认目录（~/.pi/agent/sessions）并输出统计页
-tokstat --dir <DIR>     扫描指定目录（可重复指定多个）
-tokstat --stdin         从标准输入逐行读取 JSONL 会话日志
+tokstat                 自动扫描全部 Agent 数据源并输出统计页
+tokstat --dir <DIR>     扫描指定目录/文件（按路径自动识别来源，可重复指定）
+tokstat --stdin         从标准输入逐行读取 JSONL 会话日志（pi 格式）
 tokstat --days <N>      热力图时间跨度上限天数，默认 365（实际窗口自适应数据跨度）
 tokstat --no-color      禁用颜色输出
 tokstat -h, --help      显示帮助
@@ -60,15 +77,17 @@ tokstat -V, --version   显示版本
 
 | 变量 | 说明 |
 | --- | --- |
-| `PI_AGENT_DIR` | 逗号分隔的会话日志根目录列表（覆盖默认路径） |
+| `PI_AGENT_DIR` | 逗号分隔的 pi-agent 会话日志根目录列表 |
+| `KIMI_CODE_HOME` / `KIMI_SHARE_DIR` / `GROK_HOME` / `HERMES_HOME` | 对应源的数据根目录 |
+| `COPILOT_OTEL_FILE_EXPORTER_PATH` | Copilot OTel 单文件导出路径 |
 | `NO_COLOR` | 设置后禁用颜色 |
 
 ## 运行示例
 
 ```text
-╭───────────────────────── TokStat · pi-agent Token 统计 ──────────────────────────╮
+╭───────────────────────── TokStat · 全 Agent Token 统计 ──────────────────────────╮
 │                                                                                    │
-│ 数据源 /Users/you/.pi/agent/sessions                                                │
+│ 数据源 pi_agent · claude · opencode                                               │
 │ 统计 277 个会话文件 · 8,385 条消息 · 更新于 2026-08-11 20:24                        │
 │                                                                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────╯
