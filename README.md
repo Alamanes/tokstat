@@ -2,7 +2,7 @@
 
 全 Agent 会话 Token 用量统计 CLI。自动发现并解析本机所有编码 Agent 的用量日志（pi-agent、Codex、Claude Code、OpenCode、Gemini CLI、Kimi、Grok、Hermes、Mimocode、Copilot CLI），输出一张终端统计面板：**至今总 Token、近 30 天 Token、输入 / 输出 / 缓存命中 Token、缓存命中率、GitHub 风格每日热力图、模型排行**。
 
-统计口径与 [Tokdash](https://github.com/Shiorangerin/Tokdash) 的各解析器保持一致。
+统计口径与 Tokdash 的各解析器保持一致。
 
 ![示例](docs/screenshot.png)
 
@@ -51,7 +51,7 @@
 ```bash
 # macOS / Linux
 brew install rust  # 若没有 Rust 工具链
-git clone https://github.com/Shiorangerin/tokstat.git
+git clone https://github.com/Alamanes/tokstat.git
 cd tokstat
 cargo build --release
 # 将 target/release/tokstat 加入 PATH，或：
